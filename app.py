@@ -4,7 +4,7 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 
-st.title("在庫管理ツール（Sheets安定版）")
+st.title("在庫管理ツール（完全安定版）")
 
 # =========================
 # SESSION STATE
@@ -16,7 +16,7 @@ if "stock_state" not in st.session_state:
     st.session_state.stock_state = {}
 
 # =========================
-# GOOGLE SHEETS 認証
+# GOOGLE SHEETS 接続
 # =========================
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
@@ -27,9 +27,9 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 
-# ★ここはあなたのスプシID
 SHEET_ID = "1M4EXK_h-1L2b3aeUQnDsUEnAHtbiyxngota6nrTc8Fw"
 sheet = client.open_by_key(SHEET_ID).sheet1
+
 
 # =========================
 # STOCK LOAD
@@ -37,24 +37,40 @@ sheet = client.open_by_key(SHEET_ID).sheet1
 def load_stock():
     try:
         records = sheet.get_all_records()
-        return {r["itemID"]: r["stock"] == "True" for r in records}
+        return {str(r["itemID"]): (str(r["stock"]).upper() == "TRUE") for r in records}
     except:
         return {}
 
 stock = load_stock()
 
+
 # =========================
-# STOCK SAVE（★重要修正）
+# STOCK SAVE（完全安全版）
 # =========================
 def save_stock(data):
+
     sheet.clear()
 
     rows = [["itemID", "stock"]]
 
     for k, v in data.items():
-        rows.append([k, str(v)])
 
-    sheet.update("A1", rows)
+        # ★完全安全変換（ここ重要）
+        k = str(k).strip()
+        v = "TRUE" if bool(v) else "FALSE"
+
+        # None/空対策
+        if k == "" or k.lower() == "none":
+            continue
+
+        rows.append([k, v])
+
+    # ★Google Sheets安全更新（JSON事故防止）
+    sheet.update(
+        values=rows,
+        range_name="A1"
+    )
+
 
 # =========================
 # UPLOAD
@@ -90,7 +106,7 @@ if master is not None and check is not None:
     result = result.reset_index(drop=True)
 
     # -------------------------
-    # state初期化（全件）
+    # ★全件state初期化（重要）
     # -------------------------
     for itemid in result["itemID"]:
         if itemid not in st.session_state.stock_state:
@@ -131,13 +147,13 @@ if master is not None and check is not None:
     st.info(f"{start+1} - {min(end, total)} / {total}")
 
     # -------------------------
-    # 表示
+    # 表示 & 状態更新
     # -------------------------
     for _, row in page.iterrows():
 
-        itemid = row["itemID"]
+        itemid = str(row["itemID"])
 
-        current = st.session_state.stock_state[itemid]
+        current = st.session_state.stock_state.get(itemid, False)
 
         new_value = st.checkbox(
             itemid,
