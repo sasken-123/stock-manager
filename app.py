@@ -12,7 +12,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 
-st.title("仕入れ × eBay 管理ツール")
+st.title("在庫管理ツール")
 
 # =========================
 # SESSION STATE
@@ -129,7 +129,7 @@ def create_manual_pdf():
         content.append(Paragraph(text, style))
         content.append(Spacer(1, 8))
 
-    add("仕入れ × eBay 管理ツール マニュアル")
+    add("在庫管理ツール マニュアル")
     add("このツールは仕入れ商品の管理・在庫確認・出品管理を行うためのシステムです。")
 
     add("■ Step1：データ準備")
@@ -171,9 +171,9 @@ def create_manual_pdf():
 # =========================
 st.sidebar.header("操作")
 
-st.sidebar.download_button("📥 マスタテンプレDL", create_master_template(), file_name="master.xlsx")
-st.sidebar.download_button("📥 チェックテンプレDL", create_check_template(), file_name="check.xlsx")
-st.sidebar.download_button("📘 マニュアルDL", create_manual_pdf(), file_name="manual.pdf")
+st.sidebar.download_button("マスタテンプレDL", create_master_template(), file_name="master.xlsx")
+st.sidebar.download_button("チェックテンプレDL", create_check_template(), file_name="check.xlsx")
+st.sidebar.download_button("マニュアルDL", create_manual_pdf(), file_name="manual.pdf")
 
 st.sidebar.divider()
 
@@ -208,9 +208,6 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
     result["site"] = result["url"].apply(classify_site)
     result["ebay_url"] = result["itemID"].apply(make_ebay_link)
 
-    # =========================
-    # FILTER
-    # =========================
     def is_out(x):
         return stock.get(x, False)
 
@@ -245,10 +242,7 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
     if selected_site != "すべて":
         result = result[result["site"] == selected_site]
 
-    # =========================
-    # SAVE
-    # =========================
-    if st.sidebar.button("💾 変更を反映"):
+    if st.sidebar.button("変更を反映"):
         stock.update(st.session_state.stock_buffer)
         save_stock(stock)
         st.session_state.stock_buffer = {}
@@ -256,9 +250,6 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
 
     result = result.reset_index(drop=True)
 
-    # =========================
-    # PAGE CONTROL（復活部分）
-    # =========================
     total = len(result)
     max_page = max(0, (total - 1) // PAGE_SIZE)
 
@@ -267,7 +258,7 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col1:
-        if st.button("⬅️ 前へ"):
+        if st.button("前へ"):
             st.session_state.page = max(0, st.session_state.page - 1)
             st.rerun()
 
@@ -275,7 +266,7 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
         st.write(f"ページ: {st.session_state.page + 1} / {max_page + 1}")
 
     with col3:
-        if st.button("次へ ➡️"):
+        if st.button("次へ"):
             st.session_state.page = min(max_page, st.session_state.page + 1)
             st.rerun()
 
@@ -286,9 +277,6 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
 
     page = result.iloc[start:end]
 
-    # =========================
-    # DISPLAY
-    # =========================
     for i, (_, row) in enumerate(page.iterrows(), start=start+1):
 
         itemid = normalize_itemid(row["itemID"])
@@ -299,17 +287,17 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
         checked = st.session_state.stock_buffer.get(itemid, stock.get(itemid, False))
 
         if url:
-            purchase_link = f"🔗 [仕入れリンク]({url})"
+            purchase_link = f"[仕入れリンク]({url})"
         else:
-            purchase_link = "🔴 仕入れリンクなし"
+            purchase_link = "仕入れリンクなし"
 
         st.markdown(f"""
 ---
-**No.{i}**  
+No.{i}  
 {itemid} ｜ {site}  
 
 {purchase_link}  
-🛒 [eBay Seller Hub]({ebay_url})
+[eBay Seller Hub]({ebay_url})
 """)
 
         checked = st.checkbox(
@@ -318,5 +306,4 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
             key=f"stock_{itemid}"
         )
 
-        # ★ここ修正済み
         st.session_state.stock_buffer[itemid] = checked
