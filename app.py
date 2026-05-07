@@ -1,18 +1,10 @@
 import streamlit as st
 import pandas as pd
 from urllib.parse import urlparse
-import json
-from io import BytesIO
 import os
 
 import gspread
 from google.oauth2.service_account import Credentials
-
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 
 st.title("在庫管理ツール")
 
@@ -30,6 +22,7 @@ if "master_df" not in st.session_state:
 
 if "check_df" not in st.session_state:
     st.session_state.check_df = None
+
 
 # =========================
 # GOOGLE SHEETS CONNECT
@@ -51,19 +44,35 @@ sheet = client.open_by_key(SPREADSHEET_ID).worksheet("stock")
 
 
 # =========================
-# STOCK (Google Sheets)
+# STOCK
 # =========================
 def load_stock():
-    data = sheet.get_all_records()
-    return {row["itemID"]: row["stock"] for row in data}
+    try:
+        data = sheet.get_all_records()
+        return {str(row["itemID"]): bool(row["stock"]) for row in data}
+    except:
+        return {}
+
 
 def save_stock(data_dict):
-    sheet.clear()
-    sheet.append_row(["itemID", "stock"])
+
+    rows = [["itemID", "stock"]]
+
     for k, v in data_dict.items():
-        sheet.append_row([k, v])
+
+        k = str(k).strip()
+
+        if k == "" or k.lower() == "none":
+            continue
+
+        rows.append([k, "TRUE" if v else "FALSE"])
+
+    # ★一発更新（ここが重要）
+    sheet.update(values=rows, range_name="A1")
+
 
 stock = load_stock()
+
 
 # =========================
 # UTIL
@@ -76,6 +85,7 @@ def normalize(x):
         x = x[:-2]
     return x
 
+
 def normalize_itemid(x):
     x = normalize(x)
     try:
@@ -84,6 +94,7 @@ def normalize_itemid(x):
     except:
         pass
     return x
+
 
 def classify_site(url):
     url = normalize(url)
@@ -102,6 +113,7 @@ def classify_site(url):
     if "paypayfleamarket" in d: return "ヤフフリ"
 
     return "その他"
+
 
 def make_ebay_link(itemid):
     return f"https://www.ebay.com/sh/lst/active?keyword={itemid}&source=filterbar&action=search"
@@ -130,7 +142,10 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
     master = st.session_state.master_df
     check = st.session_state.check_df
 
-    check_ids = set(check.iloc[:, 0].dropna().astype(str).apply(normalize_itemid))
+    check_ids = set(
+        check.iloc[:, 0].dropna().astype(str).apply(normalize_itemid)
+    )
+
     master["itemID"] = master["itemID"].astype(str).apply(normalize_itemid)
 
     result = master[~master["itemID"].isin(check_ids)].copy()
@@ -139,15 +154,18 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
     result["site"] = result["url"].apply(classify_site)
     result["ebay_url"] = result["itemID"].apply(make_ebay_link)
 
-    def is_out(x):
-        return stock.get(x, False)
-
+    # =========================
+    # SAVE BUTTON
+    # =========================
     if st.sidebar.button("変更を反映"):
         stock.update(st.session_state.stock_buffer)
         save_stock(stock)
         st.session_state.stock_buffer = {}
         st.rerun()
 
+    # =========================
+    # PAGINATION
+    # =========================
     result = result.reset_index(drop=True)
 
     total = len(result)
@@ -159,15 +177,12 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
 
     with col1:
         if st.button("前へ"):
-            st.session_state.page = max(0, st.session_state.page - 1)
+            st.session_state.page -= 1
             st.rerun()
-
-    with col2:
-        st.write(f"ページ: {st.session_state.page + 1} / {max_page + 1}")
 
     with col3:
         if st.button("次へ"):
-            st.session_state.page = min(max_page, st.session_state.page + 1)
+            st.session_state.page += 1
             st.rerun()
 
     start = st.session_state.page * PAGE_SIZE
@@ -177,6 +192,9 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
 
     page = result.iloc[start:end]
 
+    # =========================
+    # DISPLAY
+    # =========================
     for i, (_, row) in enumerate(page.iterrows(), start=start+1):
 
         itemid = normalize_itemid(row["itemID"])
@@ -184,12 +202,12 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
         site = row["site"]
         ebay_url = row["ebay_url"]
 
-        checked = st.session_state.stock_buffer.get(itemid, stock.get(itemid, False))
+        checked = st.session_state.stock_buffer.get(
+            itemid,
+            stock.get(itemid, False)
+        )
 
-        if url:
-            purchase_link = f"[仕入れリンク]({url})"
-        else:
-            purchase_link = "仕入れリンクなし"
+        purchase_link = f"[仕入れリンク]({url})" if url else "仕入れリンクなし"
 
         st.markdown(f"""
 ---
