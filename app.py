@@ -5,10 +5,12 @@ import json
 from io import BytesIO
 import os
 
+import gspread
+from google.oauth2.service_account import Credentials
+
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
-
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 
@@ -20,9 +22,8 @@ st.title("在庫管理ツール")
 if "page" not in st.session_state:
     st.session_state.page = 0
 
-if "stock_state" not in st.session_state:
-    # ★全データ状態保持用（ここが今回の核心）
-    st.session_state.stock_state = {}
+if "stock_buffer" not in st.session_state:
+    st.session_state.stock_buffer = {}
 
 if "master_df" not in st.session_state:
     st.session_state.master_df = None
@@ -30,23 +31,39 @@ if "master_df" not in st.session_state:
 if "check_df" not in st.session_state:
     st.session_state.check_df = None
 
+# =========================
+# GOOGLE SHEETS CONNECT
+# =========================
+scope = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
+
+creds = Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"],
+    scopes=scope
+)
+
+client = gspread.authorize(creds)
+
+SPREADSHEET_ID = "1M4EXK_h-1L2b3aeUQnDsUEnAHtbiyxngota6nrTc8Fw"
+sheet = client.open_by_key(SPREADSHEET_ID).worksheet("stock")
+
 
 # =========================
-# STOCK FILE (Google Sheets代替 or ローカル)
+# STOCK (Google Sheets)
 # =========================
 def load_stock():
-    try:
-        with open("stock.json", "r") as f:
-            return json.load(f)
-    except:
-        return {}
+    data = sheet.get_all_records()
+    return {row["itemID"]: row["stock"] for row in data}
 
-def save_stock(data):
-    with open("stock.json", "w") as f:
-        json.dump(data, f)
+def save_stock(data_dict):
+    sheet.clear()
+    sheet.append_row(["itemID", "stock"])
+    for k, v in data_dict.items():
+        sheet.append_row([k, v])
 
 stock = load_stock()
-
 
 # =========================
 # UTIL
@@ -87,7 +104,7 @@ def classify_site(url):
     return "その他"
 
 def make_ebay_link(itemid):
-    return f"https://www.ebay.com/sh/lst/active?keyword={itemid}"
+    return f"https://www.ebay.com/sh/lst/active?keyword={itemid}&source=filterbar&action=search"
 
 
 # =========================
@@ -122,27 +139,17 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
     result["site"] = result["url"].apply(classify_site)
     result["ebay_url"] = result["itemID"].apply(make_ebay_link)
 
-    result = result.reset_index(drop=True)
+    def is_out(x):
+        return stock.get(x, False)
 
-    # =========================
-    # ★重要：全データをstateに初期登録（ここが核心）
-    # =========================
-    for itemid in result["itemID"]:
-        if itemid not in st.session_state.stock_state:
-            st.session_state.stock_state[itemid] = stock.get(itemid, False)
-
-    # =========================
-    # SAVE BUTTON
-    # =========================
     if st.sidebar.button("変更を反映"):
-        stock.update(st.session_state.stock_state)
+        stock.update(st.session_state.stock_buffer)
         save_stock(stock)
+        st.session_state.stock_buffer = {}
         st.rerun()
 
+    result = result.reset_index(drop=True)
 
-    # =========================
-    # PAGINATION
-    # =========================
     total = len(result)
     max_page = max(0, (total - 1) // PAGE_SIZE)
 
@@ -166,22 +173,18 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
     start = st.session_state.page * PAGE_SIZE
     end = start + PAGE_SIZE
 
-    page = result.iloc[start:end]
-
     st.info(f"{start+1}-{min(end,total)} / {total}")
 
+    page = result.iloc[start:end]
 
-    # =========================
-    # DISPLAY
-    # =========================
     for i, (_, row) in enumerate(page.iterrows(), start=start+1):
 
-        itemid = row["itemID"]
+        itemid = normalize_itemid(row["itemID"])
         url = row["url"]
         site = row["site"]
         ebay_url = row["ebay_url"]
 
-        checked = st.session_state.stock_state[itemid]
+        checked = st.session_state.stock_buffer.get(itemid, stock.get(itemid, False))
 
         if url:
             purchase_link = f"[仕入れリンク]({url})"
@@ -194,14 +197,13 @@ No.{i}
 {itemid} ｜ {site}  
 
 {purchase_link}  
-[eBay]({ebay_url})
+[eBay Seller Hub]({ebay_url})
 """)
 
-        # ★ここで常にstate更新（未チェックも保持）
-        new_value = st.checkbox(
+        checked = st.checkbox(
             "在庫なし",
             value=checked,
             key=f"stock_{itemid}"
         )
 
-        st.session_state.stock_state[itemid] = new_value
+        st.session_state.stock_buffer[itemid] = checked
