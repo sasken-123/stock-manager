@@ -5,22 +5,26 @@ import json
 from io import BytesIO
 import os
 
-import gspread
-from google.oauth2.service_account import Credentials
-
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
+
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 
-st.title("在庫管理ツール")
+st.title("仕入れ × eBay 管理ツール")
 
 # =========================
 # SESSION STATE
 # =========================
 if "page" not in st.session_state:
     st.session_state.page = 0
+
+if "stock_filter" not in st.session_state:
+    st.session_state.stock_filter = "すべて"
+
+if "site_filter" not in st.session_state:
+    st.session_state.site_filter = "すべて"
 
 if "stock_buffer" not in st.session_state:
     st.session_state.stock_buffer = {}
@@ -32,36 +36,18 @@ if "check_df" not in st.session_state:
     st.session_state.check_df = None
 
 # =========================
-# GOOGLE SHEETS CONNECT
-# =========================
-scope = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
-
-creds = Credentials.from_service_account_info(
-    st.secrets["gcp_service_account"],
-    scopes=scope
-)
-
-client = gspread.authorize(creds)
-
-SPREADSHEET_ID = "1M4EXK_h-1L2b3aeUQnDsUEnAHtbiyxngota6nrTc8Fw"
-sheet = client.open_by_key(SPREADSHEET_ID).worksheet("stock")
-
-
-# =========================
-# STOCK (Google Sheets)
+# STOCK
 # =========================
 def load_stock():
-    data = sheet.get_all_records()
-    return {row["itemID"]: row["stock"] for row in data}
+    try:
+        with open("stock.json", "r") as f:
+            return json.load(f)
+    except:
+        return {}
 
-def save_stock(data_dict):
-    sheet.clear()
-    sheet.append_row(["itemID", "stock"])
-    for k, v in data_dict.items():
-        sheet.append_row([k, v])
+def save_stock(data):
+    with open("stock.json", "w") as f:
+        json.dump(data, f)
 
 stock = load_stock()
 
@@ -106,6 +92,90 @@ def classify_site(url):
 def make_ebay_link(itemid):
     return f"https://www.ebay.com/sh/lst/active?keyword={itemid}&source=filterbar&action=search"
 
+# =========================
+# EXCEL TEMPLATE
+# =========================
+def create_master_template():
+    df = pd.DataFrame({"itemID": [], "url": []})
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, index=False)
+    return buf.getvalue()
+
+def create_check_template():
+    df = pd.DataFrame({"itemID": []})
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, index=False)
+    return buf.getvalue()
+
+# =========================
+# PDF MANUAL
+# =========================
+def create_manual_pdf():
+
+    pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+
+    styles = getSampleStyleSheet()
+    style = styles["Normal"]
+    style.fontName = "HeiseiKakuGo-W5"
+
+    content = []
+
+    def add(text):
+        content.append(Paragraph(text, style))
+        content.append(Spacer(1, 8))
+
+    add("仕入れ × eBay 管理ツール マニュアル")
+    add("このツールは仕入れ商品の管理・在庫確認・出品管理を行うためのシステムです。")
+
+    add("■ Step1：データ準備")
+    add("マスタ（itemID / url）とチェック（itemID）を準備してください。")
+
+    if os.path.exists("images/step1.png"):
+        content.append(Image("images/step1.png", width=400, height=220))
+
+    add("■ Step2：アップロード")
+    add("左側からマスタとチェックをアップロードします。")
+
+    if os.path.exists("images/step2.png"):
+        content.append(Image("images/step2.png", width=400, height=220))
+
+    add("■ Step3：フィルター")
+    add("在庫・仕入れ元・itemID検索で絞り込み可能です。")
+
+    if os.path.exists("images/step3.png"):
+        content.append(Image("images/step3.png", width=400, height=220))
+
+    add("■ Step4：在庫チェック")
+    add("チェックを入れると在庫なし扱いになります。")
+
+    if os.path.exists("images/step4.png"):
+        content.append(Image("images/step4.png", width=400, height=220))
+
+    add("■ Step5：変更反映")
+    add("必ず『変更を反映』を押してください。")
+
+    if os.path.exists("images/step5.png"):
+        content.append(Image("images/step5.png", width=400, height=220))
+
+    doc.build(content)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+# =========================
+# SIDEBAR
+# =========================
+st.sidebar.header("操作")
+
+st.sidebar.download_button("📥 マスタテンプレDL", create_master_template(), file_name="master.xlsx")
+st.sidebar.download_button("📥 チェックテンプレDL", create_check_template(), file_name="check.xlsx")
+st.sidebar.download_button("📘 マニュアルDL", create_manual_pdf(), file_name="manual.pdf")
+
+st.sidebar.divider()
 
 # =========================
 # UPLOAD
@@ -114,11 +184,10 @@ file_master = st.file_uploader("マスタ")
 file_check = st.file_uploader("チェック")
 
 if file_master is not None:
-    st.session_state.master_df = pd.read_excel(file_master, dtype=str)
+    st.session_state.master_df = pd.read_excel(file_master, dtype=str) if not file_master.name.endswith("csv") else pd.read_csv(file_master, dtype=str)
 
 if file_check is not None:
-    st.session_state.check_df = pd.read_excel(file_check, dtype=str)
-
+    st.session_state.check_df = pd.read_excel(file_check, dtype=str) if not file_check.name.endswith("csv") else pd.read_csv(file_check, dtype=str)
 
 # =========================
 # MAIN
@@ -139,10 +208,47 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
     result["site"] = result["url"].apply(classify_site)
     result["ebay_url"] = result["itemID"].apply(make_ebay_link)
 
+    # =========================
+    # FILTER
+    # =========================
     def is_out(x):
         return stock.get(x, False)
 
-    if st.sidebar.button("変更を反映"):
+    st.session_state.stock_filter = st.sidebar.selectbox(
+        "在庫フィルター",
+        ["すべて", "在庫あり", "在庫なし"],
+        index=["すべて", "在庫あり", "在庫なし"].index(st.session_state.stock_filter)
+    )
+
+    if st.session_state.stock_filter == "在庫あり":
+        result = result[result["itemID"].apply(lambda x: not is_out(x))]
+    elif st.session_state.stock_filter == "在庫なし":
+        result = result[result["itemID"].apply(lambda x: is_out(x))]
+
+    search_id = st.sidebar.text_input("itemID検索")
+
+    if search_id:
+        search_id = normalize_itemid(search_id)
+        result = result[result["itemID"] == search_id]
+
+    site_counts = result["site"].value_counts().to_dict()
+    site_options = ["すべて"] + sorted(site_counts.keys())
+
+    site_labels = {s: f"{s} ({site_counts.get(s,0)})" for s in site_options if s != "すべて"}
+    label_list = ["すべて"] + [site_labels[s] for s in site_options if s != "すべて"]
+
+    selected_label = st.sidebar.selectbox("仕入れフィルター", label_list)
+
+    reverse = {v:k for k,v in site_labels.items()}
+    selected_site = reverse.get(selected_label, "すべて")
+
+    if selected_site != "すべて":
+        result = result[result["site"] == selected_site]
+
+    # =========================
+    # SAVE
+    # =========================
+    if st.sidebar.button("💾 変更を反映"):
         stock.update(st.session_state.stock_buffer)
         save_stock(stock)
         st.session_state.stock_buffer = {}
@@ -150,6 +256,9 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
 
     result = result.reset_index(drop=True)
 
+    # =========================
+    # PAGE CONTROL（復活部分）
+    # =========================
     total = len(result)
     max_page = max(0, (total - 1) // PAGE_SIZE)
 
@@ -158,7 +267,7 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col1:
-        if st.button("前へ"):
+        if st.button("⬅️ 前へ"):
             st.session_state.page = max(0, st.session_state.page - 1)
             st.rerun()
 
@@ -166,7 +275,7 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
         st.write(f"ページ: {st.session_state.page + 1} / {max_page + 1}")
 
     with col3:
-        if st.button("次へ"):
+        if st.button("次へ ➡️"):
             st.session_state.page = min(max_page, st.session_state.page + 1)
             st.rerun()
 
@@ -177,6 +286,9 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
 
     page = result.iloc[start:end]
 
+    # =========================
+    # DISPLAY
+    # =========================
     for i, (_, row) in enumerate(page.iterrows(), start=start+1):
 
         itemid = normalize_itemid(row["itemID"])
@@ -187,17 +299,17 @@ if st.session_state.master_df is not None and st.session_state.check_df is not N
         checked = st.session_state.stock_buffer.get(itemid, stock.get(itemid, False))
 
         if url:
-            purchase_link = f"[仕入れリンク]({url})"
+            purchase_link = f"🔗 [仕入れリンク]({url})"
         else:
-            purchase_link = "仕入れリンクなし"
+            purchase_link = "🔴 仕入れリンクなし"
 
         st.markdown(f"""
 ---
-No.{i}  
+**No.{i}**  
 {itemid} ｜ {site}  
 
 {purchase_link}  
-[eBay Seller Hub]({ebay_url})
+🛒 [eBay Seller Hub]({ebay_url})
 """)
 
         checked = st.checkbox(
@@ -206,4 +318,5 @@ No.{i}
             key=f"stock_{itemid}"
         )
 
+        # ★ここ修正済み
         st.session_state.stock_buffer[itemid] = checked
