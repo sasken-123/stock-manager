@@ -1,13 +1,209 @@
-{
-  "type": "service_account",
-  "project_id": "stock-manager-app-495613",
-  "private_key_id": "419f7242acb08c4f4742e1c63782948150bba90a",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDWoC4DCrKrHcls\njjVPvBCHn5QDVOdEnLAJJwQoKhmh4re2fSEe0BQbsOVBYFSR8a5P1iW7odRWcK0d\nLY1RjzPdWSNTY5TsshXugradqBgmVy0IMEzEzDj9ptnxQbBI21TidlTEaQflY9A7\nkrulJuNX9b35UOyrmqCne5Zw3yIc6DVupVdIhNd0RIud6VnIt1bPxygEOkHox7TS\nEhM5mLHOho+JS6iW4TEQk5Pf/P5M4Wlje07V8KTW6g3a6Nl3uKh21Hgs05QL9c8s\nE6qEqZYlct6RorBYHCwkwIW2xHFLn/9R1uPOwgO4JW5CVS+iJtJhO6gUwNagTUKX\nk4sJfGaDAgMBAAECggEATCVVXb/oZtxxD6IemPTkunFr7oiraoTa0cx1ZZiWMoDA\n5C5d11REphRrKfg22PaxfOLBzWGbd7WPPbhhGIwhfwk2hsngVt/R9yaKCsJOGyA3\nul2EhxfbqmaNkVJYbGjgo14PMgX/hquUf+ZNy8jRxO3LYk6LQVDhabpnxBDuRemY\nWObUSvwpUhRr5I8/lS6kOaCiY+/CeEYNuU65wVwRZg7KDpEjg/F6nYZuyZIFapVx\nzHsI0pIxIXdBwP+3mmsA7f3m2hLUJgcg4lLIGBMEWwIPCvUyOz3dokJNB909tTLY\ntb06rkQCI5ncnZX0He81RXokxLtt5AxuW9lOT/rwZQKBgQDvxU2N++5F4LfrRAW6\n8vyySkSi/Gzk0RPhxpB1Se9PV6p2fHRJIfIJThCZDJrfoSrqLulezFtNfZyIjvoi\n+okxOWE9PQKVxLPk8JbZct3m0SiCAmAREei1kBBnuoVF4isAhF6EgYpQMNZsBuh6\nIaDPLzYghZMjiAOErfo5Kr50dQKBgQDlJytTXJSr67WmbGJr6gjdUcI5OybBVUlv\nM7AiOIzSXQzWikKSPVxvUc0ibcYRsbs87mTWURq8lZ33+XIPwF4Vf5mt06w3oDAj\n5eNe4WTvNvooiXdhVRi3NsGp+IAW6XK6b1AgPd4UoWLKl+y8rowhvZ/Wi/S101sr\n+KdAUSIwFwKBgQDKFmzgf/d7FAVQGNwPjt+nUet5x/HsBcCRKe/1u2QlZok5JnpI\nbYD3kMFyjeo3FDr8eJ+fk/RcYsO9YWy4cJuTTn6Dw9la7BiHnLQ4AJXBBoby1Ret\nK4AND6iUFORhW1fNLsQPQLOYFSGUmVn2HkPQfEVNseerKed1O8HLzxgJRQKBgH+4\nxT1BbNwmFKkd3/2mBCrXVxnvDjrT/ooslQ991X+qvW0WwuQfr1WckmmOJcfW+DWN\n6kZKDkzuV43PSvPclJQG+vEX+fVHI43epExN9KQgUG4nsJJfi9cSff7usvYSSBAB\n2vcdhJqbGSUyaJEB+LkVp/E9MLfnhfmMLix7DEMhAoGAdnw+nP6AjAvUmhNdTX2a\nxGE8x+plO/k32PCHiRQCYxtZwZeepLsHT+LGsrVJbaxbvkY/JU6pu3oQrTzxP+ya\npHGusA/ndjlO0BprMtgrMw1D7z7TPgyh0ynp3soQgMwMdGqB7BnmlQubz7f8BJ2c\nwTVVgSg+1UaJI+ka1JTUGkM=\n-----END PRIVATE KEY-----\n",
-  "client_email": "streamlit-sheets@stock-manager-app-495613.iam.gserviceaccount.com",
-  "client_id": "102726611212801073527",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/streamlit-sheets%40stock-manager-app-495613.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
-}
+import streamlit as st
+import pandas as pd
+from urllib.parse import urlparse
+import json
+from io import BytesIO
+import os
+
+import gspread
+from google.oauth2.service_account import Credentials
+
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+st.title("在庫管理ツール")
+
+# =========================
+# SESSION STATE
+# =========================
+if "page" not in st.session_state:
+    st.session_state.page = 0
+
+if "stock_buffer" not in st.session_state:
+    st.session_state.stock_buffer = {}
+
+if "master_df" not in st.session_state:
+    st.session_state.master_df = None
+
+if "check_df" not in st.session_state:
+    st.session_state.check_df = None
+
+# =========================
+# GOOGLE SHEETS CONNECT
+# =========================
+scope = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
+
+creds = Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"],
+    scopes=scope
+)
+
+client = gspread.authorize(creds)
+
+SPREADSHEET_ID = "1M4EXK_h-1L2b3aeUQnDsUEnAHtbiyxngota6nrTc8Fw"
+sheet = client.open_by_key(SPREADSHEET_ID).worksheet("stock")
+
+
+# =========================
+# STOCK (Google Sheets)
+# =========================
+def load_stock():
+    data = sheet.get_all_records()
+    return {row["itemID"]: row["stock"] for row in data}
+
+def save_stock(data_dict):
+    sheet.clear()
+    sheet.append_row(["itemID", "stock"])
+    for k, v in data_dict.items():
+        sheet.append_row([k, v])
+
+stock = load_stock()
+
+# =========================
+# UTIL
+# =========================
+def normalize(x):
+    x = str(x).strip()
+    if x.lower() in ["nan", "none", "", "na"]:
+        return ""
+    if x.endswith(".0"):
+        x = x[:-2]
+    return x
+
+def normalize_itemid(x):
+    x = normalize(x)
+    try:
+        if "e+" in x.lower():
+            x = str(int(float(x)))
+    except:
+        pass
+    return x
+
+def classify_site(url):
+    url = normalize(url)
+    if url == "":
+        return "空欄"
+
+    d = urlparse(url).netloc.replace("www.", "").lower()
+
+    if "2ndstreet" in d: return "2ndstreet"
+    if "mercari" in d: return "メルカリ"
+    if "rakuma" in d or "fril" in d: return "ラクマ"
+    if "amazon" in d: return "Amazon"
+    if "rakuten" in d: return "楽天"
+    if "auctions.yahoo" in d: return "ヤフオク"
+    if "shopping.yahoo" in d: return "ヤフショ"
+    if "paypayfleamarket" in d: return "ヤフフリ"
+
+    return "その他"
+
+def make_ebay_link(itemid):
+    return f"https://www.ebay.com/sh/lst/active?keyword={itemid}&source=filterbar&action=search"
+
+
+# =========================
+# UPLOAD
+# =========================
+file_master = st.file_uploader("マスタ")
+file_check = st.file_uploader("チェック")
+
+if file_master is not None:
+    st.session_state.master_df = pd.read_excel(file_master, dtype=str)
+
+if file_check is not None:
+    st.session_state.check_df = pd.read_excel(file_check, dtype=str)
+
+
+# =========================
+# MAIN
+# =========================
+PAGE_SIZE = 50
+
+if st.session_state.master_df is not None and st.session_state.check_df is not None:
+
+    master = st.session_state.master_df
+    check = st.session_state.check_df
+
+    check_ids = set(check.iloc[:, 0].dropna().astype(str).apply(normalize_itemid))
+    master["itemID"] = master["itemID"].astype(str).apply(normalize_itemid)
+
+    result = master[~master["itemID"].isin(check_ids)].copy()
+
+    result["url"] = result["url"].astype(str).apply(normalize)
+    result["site"] = result["url"].apply(classify_site)
+    result["ebay_url"] = result["itemID"].apply(make_ebay_link)
+
+    def is_out(x):
+        return stock.get(x, False)
+
+    if st.sidebar.button("変更を反映"):
+        stock.update(st.session_state.stock_buffer)
+        save_stock(stock)
+        st.session_state.stock_buffer = {}
+        st.rerun()
+
+    result = result.reset_index(drop=True)
+
+    total = len(result)
+    max_page = max(0, (total - 1) // PAGE_SIZE)
+
+    st.session_state.page = max(0, min(st.session_state.page, max_page))
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+
+    with col1:
+        if st.button("前へ"):
+            st.session_state.page = max(0, st.session_state.page - 1)
+            st.rerun()
+
+    with col2:
+        st.write(f"ページ: {st.session_state.page + 1} / {max_page + 1}")
+
+    with col3:
+        if st.button("次へ"):
+            st.session_state.page = min(max_page, st.session_state.page + 1)
+            st.rerun()
+
+    start = st.session_state.page * PAGE_SIZE
+    end = start + PAGE_SIZE
+
+    st.info(f"{start+1}-{min(end,total)} / {total}")
+
+    page = result.iloc[start:end]
+
+    for i, (_, row) in enumerate(page.iterrows(), start=start+1):
+
+        itemid = normalize_itemid(row["itemID"])
+        url = row["url"]
+        site = row["site"]
+        ebay_url = row["ebay_url"]
+
+        checked = st.session_state.stock_buffer.get(itemid, stock.get(itemid, False))
+
+        if url:
+            purchase_link = f"[仕入れリンク]({url})"
+        else:
+            purchase_link = "仕入れリンクなし"
+
+        st.markdown(f"""
+---
+No.{i}  
+{itemid} ｜ {site}  
+
+{purchase_link}  
+[eBay Seller Hub]({ebay_url})
+""")
+
+        checked = st.checkbox(
+            "在庫なし",
+            value=checked,
+            key=f"stock_{itemid}"
+        )
+
+        st.session_state.stock_buffer[itemid] = checked
